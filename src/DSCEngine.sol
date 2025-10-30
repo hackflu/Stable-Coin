@@ -44,7 +44,6 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
  * @notice This contract is the core od the DSC System.It handles all the logic for mining and
  * redmeeing DSC , as well as depositing $ withdrawing collateral
  */
-
 contract DSCEngine is ReentrancyGuard {
     ///////////////////
     //// Errors //////
@@ -65,7 +64,7 @@ contract DSCEngine is ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
     uint256 private constant LIQUIDATION_PRECISION = 100;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
     uint256 private constant LIQUIDATION_BONUS = 10;
 
     mapping(address token => address priceFeed) private s_priceFeed;
@@ -100,13 +99,6 @@ contract DSCEngine is ReentrancyGuard {
     modifier isAllowed(address token) {
         if (s_priceFeed[token] == address(0)) {
             revert DSCEngine_NotAllowedToken();
-        }
-        _;
-    }
-
-    modifier healthFactorCheck(uint256 healthFactor) {
-        if (healthFactor < MIN_HEALTH_FACTOR) {
-            revert DSCEngine_BreaksHealthFactor(healthFactor);
         }
         _;
     }
@@ -153,7 +145,6 @@ contract DSCEngine is ReentrancyGuard {
      * @param tokenCollateralAddress The address of the token to deposit as collateral
      * @param amountCollateral The amount of collateral to deposit
      */
-
     function depositCollateral(
         address tokenCollateralAddress,
         uint256 amountCollateral
@@ -191,9 +182,19 @@ contract DSCEngine is ReentrancyGuard {
         address tokenCollateralAddress,
         uint256 amountOfCollateral,
         uint256 amountDscToBurn
-    ) external {
-        burnDsc(amountDscToBurn);
-        redeemCollateral(tokenCollateralAddress, amountOfCollateral);
+    )
+        external
+        moreThanZero(amountOfCollateral)
+        isAllowed(tokenCollateralAddress)
+    {
+        _burnDsc(msg.sender, msg.sender, amountDscToBurn);
+        _redeemCollateral(
+            msg.sender,
+            msg.sender,
+            tokenCollateralAddress,
+            amountOfCollateral
+        );
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     /*
@@ -204,14 +205,19 @@ contract DSCEngine is ReentrancyGuard {
     function redeemCollateral(
         address tokenCollateralAddress,
         uint256 amountOfCollateral
-    ) public moreThanZero(amountOfCollateral) nonReentrant {
+    )
+        public
+        moreThanZero(amountOfCollateral)
+        nonReentrant
+        isAllowed(tokenCollateralAddress)
+    {
         _redeemCollateral(
             msg.sender,
             msg.sender,
             tokenCollateralAddress,
             amountOfCollateral
         );
-        // _revertIfHealthFactorIsBroken(msg.sender);
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     /*
@@ -230,7 +236,7 @@ contract DSCEngine is ReentrancyGuard {
 
     function burnDsc(uint256 amount) public moreThanZero(amount) {
         _burnDsc(msg.sender, msg.sender, amount);
-        // _revertIfHealthFactorIsBroken(msg.sender); // I dont think this is necessary
+        _revertIfHealthFactorIsBroken(msg.sender); // I dont think this is necessary
     }
 
     /*
@@ -247,9 +253,8 @@ contract DSCEngine is ReentrancyGuard {
         address collateral,
         address user,
         uint256 debtToCover
-    ) external moreThanZero(debtToCover) nonReentrant {
+    ) external moreThanZero(debtToCover) isAllowed(collateral) nonReentrant {
         uint256 startingUserHealthFactor = _healthFactor(user);
-
         if (startingUserHealthFactor > MIN_HEALTH_FACTOR) {
             revert DSCEngine_UserIsHealthyCantBeLiquidated();
         }
@@ -263,6 +268,7 @@ contract DSCEngine is ReentrancyGuard {
 
         uint256 totalCollateralRedeemed = tokenAmountFromDebtCovered +
             bonusCollateral;
+
         _redeemCollateral(
             user,
             msg.sender,
@@ -275,10 +281,12 @@ contract DSCEngine is ReentrancyGuard {
         if (endingUserHealthFactor <= startingUserHealthFactor) {
             revert DSCEngine_HealthfactorNotImproved();
         }
-        _revertIfHealthFactorIsBroken(msg.sender);
+        _revertIfHealthFactorIsBroken(user);
     }
 
-    function getHealthFactor() external view {}
+    function getHealthFactor(address user) external view returns (uint256) {
+        return _healthFactor(user);
+    }
 
     //////////////////////////////////
     //private internal view function//
@@ -323,9 +331,7 @@ contract DSCEngine is ReentrancyGuard {
             uint256 totalDscMinted,
             uint256 totalCollateralValueInUse
         ) = _getAccountInformation(user);
-        uint256 collateralAdjustedThreshold = (totalCollateralValueInUse *
-            LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-        return ((collateralAdjustedThreshold * PRECISION) / totalDscMinted);
+        return  _calculateHealthFactor(totalDscMinted, totalCollateralValueInUse);
     }
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
@@ -354,6 +360,16 @@ contract DSCEngine is ReentrancyGuard {
             revert DSCEngine_TransferFailed();
         }
         i_dsc.burn(amountDscToBurn);
+    }
+
+    function _calculateHealthFactor(
+        uint256 totalDscMinted,
+        uint256 collateralValueInUsd
+    ) internal pure returns (uint256) {
+        if (totalDscMinted == 0) return type(uint256).max;
+        uint256 collateralAdjustedForThreshold = (collateralValueInUsd *
+            LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
     }
 
     //////////////////////////////////
@@ -405,4 +421,24 @@ contract DSCEngine is ReentrancyGuard {
             (usdAmountInWei * PRECISION) /
             (uint256(price) * ADDITIONAL_FEED_PRECISION);
     }
+
+    function calculateHealthFactor(
+        uint256 totalDscMinted,
+        uint256 collateralValueInUsd
+    )
+        external
+        pure
+        returns (uint256)
+    {
+        return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
+    }
+
+    function getPrecision() external pure returns (uint256) {
+        return PRECISION;
+    }
+
+    function getAdditionalFeedPrecision() external pure returns (uint256) {
+        return ADDITIONAL_FEED_PRECISION;
+    }
+
 }
