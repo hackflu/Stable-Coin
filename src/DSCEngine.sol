@@ -225,7 +225,7 @@ contract DSCEngine is ReentrancyGuard {
      * @param anountDscToMint The amount of centralized stablecoin to mint
      * @notice They must have collateral value greater than the minimum threshold
      */
-    function mintDSC(uint256 amountDscToMint) public nonReentrant {
+    function mintDSC(uint256 amountDscToMint) public moreThanZero(amountDscToMint) nonReentrant {
         s_DscMinted[msg.sender] += amountDscToMint;
         _revertIfHealthFactorIsBroken(msg.sender);
         bool minted = i_dsc.mint(msg.sender, amountDscToMint);
@@ -331,7 +331,8 @@ contract DSCEngine is ReentrancyGuard {
             uint256 totalDscMinted,
             uint256 totalCollateralValueInUse
         ) = _getAccountInformation(user);
-        return  _calculateHealthFactor(totalDscMinted, totalCollateralValueInUse);
+        return
+            _calculateHealthFactor(totalDscMinted, totalCollateralValueInUse);
     }
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
@@ -425,11 +426,7 @@ contract DSCEngine is ReentrancyGuard {
     function calculateHealthFactor(
         uint256 totalDscMinted,
         uint256 collateralValueInUsd
-    )
-        external
-        pure
-        returns (uint256)
-    {
+    ) external pure returns (uint256) {
         return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
     }
 
@@ -441,4 +438,14 @@ contract DSCEngine is ReentrancyGuard {
         return ADDITIONAL_FEED_PRECISION;
     }
 
+    function getCollateralTokens() external view returns (address[] memory) {
+        return s_collateralToken;
+    }
+
+    function getAccountInformation(address user) external view returns(
+        uint256 totalDscMinted,
+        uint256 collateralvalueInUsd
+    ){
+        (totalDscMinted , collateralvalueInUsd) = _getAccountInformation(user);
+    }
 }
