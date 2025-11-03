@@ -29,7 +29,7 @@ import {DecentralizedStableCoin} from "./DecentralizedStableCoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-
+import {OracleLib} from "./libraries/OracleLib.sol";
 /**
  * @title DSCEngine
  * @author Devilknowyou
@@ -56,7 +56,11 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine_MintFailed();
     error DSCEngine_UserIsHealthyCantBeLiquidated();
     error DSCEngine_HealthfactorNotImproved();
-    /////////////////////
+
+    ///////////////////////////
+    //// Type declaration ////
+    /////////////////////////
+    using OracleLib for AggregatorV3Interface;
     // State variables //
     ////////////////////
 
@@ -393,7 +397,7 @@ contract DSCEngine is ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(
             s_priceFeed[token]
         );
-        (, int256 price, , , ) = priceFeed.latestRoundData();
+        (, int256 price, , , ) = priceFeed.StaleCheckLatestRoundData();
         return
             ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }
@@ -440,6 +444,10 @@ contract DSCEngine is ReentrancyGuard {
 
     function getCollateralTokens() external view returns (address[] memory) {
         return s_collateralToken;
+    }
+
+    function getCollateralTokenPriceFeed(address collateralAddress) external view returns(address){
+        return s_priceFeed[collateralAddress];
     }
 
     function getAccountInformation(address user) external view returns(
